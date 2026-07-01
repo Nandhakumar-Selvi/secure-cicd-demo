@@ -1,34 +1,235 @@
-name: Secure CI/CD Pipeline
+name: Enterprise Secure CI/CD Pipeline
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
 
   pull_request:
-    branches: [main]
+    branches:
+      - main
 
 permissions:
-  actions: read
   contents: read
   security-events: write
+  actions: read
 
 jobs:
-  codeql:
-    name: CodeQL Security Scan
 
+#####################################################
+# Secret Scanning
+#####################################################
+
+  trufflehog:
+    name: Secret Scan
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+
+      - name: TruffleHog Scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: HEAD~1
+          head: HEAD
+
+#####################################################
+# Dependency Review
+#####################################################
+
+  dependency-review:
+    name: Dependency Review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/dependency-review-action@v4
+
+#####################################################
+# CodeQL
+#####################################################
+
+  codeql:
+    name: CodeQL Analysis
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        language:
+          - javascript
+
+    steps:
+
+      - uses: actions/checkout@v4
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
-          languages: javascript
+          languages: ${{ matrix.language }}
 
       - name: Autobuild
         uses: github/codeql-action/autobuild@v3
 
-      - name: Perform CodeQL Analysis
+      - name: Analyze
         uses: github/codeql-action/analyze@v3
+
+#####################################################
+# Semgrep
+#####################################################
+
+  semgrep:
+
+    name: Semgrep SAST
+
+    runs-on: ubuntu-latest
+
+    container:
+      image: semgrep/semgrep
+
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - run: semgrep scan --config auto
+
+#####################################################
+# Node Security Audit
+#####################################################
+
+  npm-audit:
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+
+      - run: npm install
+
+      - run: npm audit --audit-level=high
+
+#####################################################
+# Docker Build
+#####################################################
+
+  docker-build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Build Docker Image
+        run: |
+
+          docker build \
+          -t secure-demo:${{ github.sha }} .
+
+#####################################################
+# Trivy Filesystem
+#####################################################
+
+  trivy-filesystem:
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Trivy FS Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+
+#####################################################
+# Trivy Docker Image
+#####################################################
+
+  trivy-image:
+
+    needs: docker-build
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - run: docker build -t secure-demo .
+
+      - name: Scan Docker Image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: secure-demo
+
+#####################################################
+# OWASP ZAP
+#####################################################
+
+  zap:
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: OWASP ZAP Scan
+
+        uses: zaproxy/action-baseline@v0.12.0
+
+        with:
+          target: https://example.com
+
+#####################################################
+# Upload Reports
+#####################################################
+
+  upload:
+
+    needs:
+
+      - codeql
+      - semgrep
+      - trivy-filesystem
+      - trivy-image
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - uses: actions/upload-artifact@v4
+
+        with:
+
+          name: SecurityReports
+
+          path: .
+
+#####################################################
+# Deploy
+#####################################################
+
+  deploy:
+
+    needs:
+
+      - codeql
+      - semgrep
+      - trivy-image
+      - trufflehog
+
+    runs-on: ubuntu-latest
+
+    environment:
+
+      name: production
+
+    steps:
+
+      - run: echo "Deploying Application..."
