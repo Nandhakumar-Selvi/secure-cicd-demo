@@ -2,9 +2,11 @@ name: Secure CI/CD Pipeline
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   pull_request:
-    branches: [main]
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -13,23 +15,24 @@ permissions:
 
 jobs:
   build:
-    name: Build
+    name: Build & Test
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout Source
         uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
 
       - name: Install Dependencies
         run: npm install
 
       - name: Run Tests
-        run: npm test || echo "No tests found"
+        run: npm test --if-present
 
   codeql:
     name: CodeQL Scan
@@ -52,7 +55,7 @@ jobs:
       - name: Autobuild
         uses: github/codeql-action/autobuild@v3
 
-      - name: Analyze
+      - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
 
   trufflehog:
@@ -63,12 +66,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: TruffleHog
+      - name: TruffleHog Scan
         uses: trufflesecurity/trufflehog@main
         with:
           path: ./
           base: HEAD~1
           head: HEAD
+
+  trivy:
+    name: Trivy Filesystem Scan
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: table
+          exit-code: "0"
+          severity: HIGH,CRITICAL
 
   docker:
     name: Docker Build
@@ -81,30 +101,17 @@ jobs:
       - name: Build Docker Image
         run: docker build -t secure-demo:${{ github.sha }} .
 
-  trivy:
-    name: Trivy Filesystem Scan
-    needs: build
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Trivy Scan
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: fs
-          scan-ref: .
-          format: table
-          exit-code: "0"
-          severity: HIGH,CRITICAL
-
   zap:
     name: OWASP ZAP Baseline
     needs: build
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: read
+
     steps:
-      - name: ZAP Baseline Scan
+      - name: Run OWASP ZAP Baseline
         uses: zaproxy/action-baseline@v0.14.0
         with:
-          target: https://lovio.store
+          target: https://example.com
+          allow_issue_writing: false
