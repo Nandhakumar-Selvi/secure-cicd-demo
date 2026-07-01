@@ -108,7 +108,3 @@ jobs:
         uses: zaproxy/action-baseline@v0.14.0
         with:
           target: https://example.com
-permissions:
-  contents: read
-  security-events: write
-  issues: write
